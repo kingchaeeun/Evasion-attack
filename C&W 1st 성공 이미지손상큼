@@ -1,0 +1,77 @@
+import tensorflow as tf
+
+# GPU가 사용 가능한지 확인
+if tf.config.list_physical_devices('GPU'):
+    print("GPU is available")
+else:
+    print("GPU is not available")
+
+import tensorflow as tf
+import numpy as np
+from tensorflow.keras.applications import VGG16
+from tensorflow.keras.applications.vgg16 import preprocess_input, decode_predictions
+from tensorflow.keras.losses import CategoricalCrossentropy
+from tensorflow.keras.optimizers import Adam
+
+# GPU가 사용 가능한지 확인
+if tf.config.list_physical_devices('GPU'):
+    print("GPU is available")
+else:
+    print("GPU is not available")
+
+# Load the pre-trained VGG16 model
+model = VGG16(weights='imagenet')
+
+def load_and_preprocess_image(image_path):
+    image = tf.io.read_file(image_path)
+    image = tf.image.decode_jpeg(image, channels=3)
+    image = tf.image.resize(image, (224, 224))
+    image = preprocess_input(image)
+    image = tf.expand_dims(image, axis=0)  # 배치 차원을 추가하여 (224, 224, 3) -> (1, 224, 224, 3)
+    return image
+
+def create_adversarial_example(image, target_label, confidence=0, learning_rate=0.01, max_iterations=1000):
+    image = tf.convert_to_tensor(image, dtype=tf.float32)
+    target_label = tf.convert_to_tensor(target_label, dtype=tf.float32)
+    perturbation = tf.Variable(tf.zeros_like(image), trainable=True)
+
+    optimizer = Adam(learning_rate=learning_rate)
+    loss_fn = CategoricalCrossentropy()
+
+    for _ in range(max_iterations):
+        with tf.GradientTape() as tape:
+            adversarial_image = image + perturbation
+            prediction = model(adversarial_image)
+            loss = loss_fn(target_label, prediction)
+            loss += confidence * tf.reduce_sum(tf.square(perturbation))
+        
+        gradients = tape.gradient(loss, perturbation)
+        optimizer.apply_gradients([(gradients, perturbation)])
+        
+        perturbation.assign(tf.clip_by_value(perturbation, -0.1, 0.1))
+
+    adversarial_image = image + perturbation
+    adversarial_image = tf.clip_by_value(adversarial_image, -1.0, 1.0)
+
+    return adversarial_image.numpy()
+
+# 사용자 입력 필요
+image_path = '/content/image.jpg'  # 사용자가 이미지 경로를 여기 입력해야 합니다.
+image = load_and_preprocess_image(image_path)
+
+# Create a one-hot encoded target label
+target_label = np.zeros((1, 1000))
+target_label[0][282] = 1  # 예: 'tiger cat' 클래스를 타겟으로 설정
+
+# Generate the adversarial example
+confidence = 0.45  # 노이즈 강도를 조정하는 파라미터
+learning_rate = 0.1  # 학습률을 조정하는 파라미터
+max_iterations = 1000  # 최대 반복 횟수 조정
+
+adversarial_image = create_adversarial_example(image, target_label, confidence, learning_rate, max_iterations)
+
+# Save the adversarial image
+adversarial_image_path = 'adversarial_image.jpg'
+adversarial_image = (adversarial_image + 1.0) * 127.5
+adversarial_image = adversarial_image.astype(np.uint8)
+tf.keras.preprocessing.image.save_img(adversarial_image_path, adversarial_image[0])
